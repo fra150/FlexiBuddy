@@ -1,0 +1,88 @@
+/* Custom styles for FlexiBuddy */
+/* General styles */
+body {
+    font-family: 'Comic Sans MS', cursive, sans-serif;
+    color: #333;
+    background-color: #f9f7ff;
+}
+/* Headings */
+h1, h2, h3 {
+    color: #6a4c93;
+    font-weight: bold;
+}
+
+.stApp > header {
+    background-color: #f2ebff;
+}
+
+/* Buttons */
+.stButton > button {
+    background-color: #8ac926;
+    color: white;
+    border-radius: 20px;
+    padding: 10px 20px;
+    font-size: 16px;
+    border: none;
+    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease;
+}
+.stButton > button:hover {
+    background-color: #6ea21c;
+    transform: scale(1.05);
+}
+/* "I'm bored" button */
+[data-testid="stButton"] button[key="boredom_button"] {
+    background-color: #ff595e;
+}
+
+[data-testid="stButton"] button[key="boredom_button"]:hover {
+    background-color: #e63946;
+}
+/* Progress bar */
+.stProgress > div > div {
+    background-color: #f77f00;
+}
+/* Text input boxes */
+.stTextInput > div > div > input {
+    font-size: 18px;
+    border-radius: 10px;
+    border: 2px solid #2d87bb;
+}
+/* Metrics */
+[data-testid="stMetric"] {
+    background-color: #f2ebff;
+    padding: 10px;
+    border-radius: 10px;
+    box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+}
+[data-testid="stMetricLabel"] {
+    font-size: 20px;
+    font-weight: bold;
+    color: #2d87bb;
+}
+[data-testid="stMetricValue"] {
+    font-size: 32px;
+    font-weight: bold;
+    color: #6a4c93;
+}
+/* Separators */
+hr {
+    border-top: 2px dashed #8ac926;
+    margin: 20px 0;
+}
+/* Adaptations for smaller screens */
+@media (max-width: 768px) {
+    h1 {
+        font-size: 28px;
+    }
+    h2 {
+        font-size: 24px;
+    }
+    .stButton > button {
+        font-size: 18px;
+        padding: 15px 25px;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 38px;
+    }
+}
