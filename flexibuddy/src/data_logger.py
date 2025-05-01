@@ -149,6 +149,28 @@ class DataLogger:
         """
         preferred = []
         
+        # Try to get AI insights if available
+        try:
+            from src.ai_models.recommendation_engine import RecommendationEngine
+            recommendation_engine = RecommendationEngine(self)
+            
+            # Update recommendation engine with latest data
+            recommendation_engine.update_profile(
+                activity_data=activity_data,
+                attention_data=attention_data,
+                frustration_data=None
+            )
+            
+            # Get AI insights
+            insights = recommendation_engine.get_insights()
+            
+            # If we have AI insights, use them to enhance the report
+            if insights and insights["preferred_activities"]:
+                print("Using AI insights for preferred activities")
+            
+        except Exception as e:
+            print(f"Could not get AI insights: {e}")
+            insights = None
 
         if not activity_data.empty and not attention_data.empty:
             activities = activity_data["activity"].unique()
@@ -163,12 +185,23 @@ class DataLogger:
                 avg_duration = activity_rows["duration"].mean() if not activity_rows.empty else 0
                 avg_attention = attention_rows["attention_duration"].mean() if not attention_rows.empty else 0
                 
+                # Calculate engagement score
+                engagement_score = (avg_attention / avg_duration) * completion_rate if avg_duration > 0 else 0
+                
+                # Add AI-enhanced insights if available
+                ai_insights = ""
+                if insights and activity in insights["preferred_activities"]:
+                    ai_insights = "AI recommends continuing with this activity."
+                elif insights and activity in insights.get("frustration_triggers", []):
+                    ai_insights = "AI suggests simplifying this activity or providing more support."
+                
                 preferred.append({
                     "activity": activity,
                     "completion_rate": f"{completion_rate:.2f}",
                     "avg_duration": f"{avg_duration:.2f}",
                     "avg_attention": f"{avg_attention:.2f}",
-                    "engagement_score": (avg_attention / avg_duration) * completion_rate if avg_duration > 0 else 0
+                    "engagement_score": engagement_score,
+                    "ai_insights": ai_insights
                 })
             preferred.sort(key=lambda x: float(x["engagement_score"]), reverse=True)
         
