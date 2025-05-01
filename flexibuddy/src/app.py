@@ -12,6 +12,9 @@ from src.activity_switcher import ActivitySwitcher
 from src.data_logger import DataLogger 
 from src.utils.config import APP_CONFIG 
 from src.utils.animations import load_animation 
+from src.ai_models.nlp_processor import NLPProcessor
+from src.ai_models.recommendation_engine import RecommendationEngine
+from src.ai_models.emotion_detector import EmotionDetector
 
 # Configure the Streamlit page settings
 st.set_page_config(
@@ -48,6 +51,12 @@ def initialize_session_state():
         st.session_state.user_name = "Friend"
     if 'avatar_state' not in st.session_state:
         st.session_state.avatar_state = "happy"
+    if 'emotion' not in st.session_state:
+        st.session_state.emotion = "neutral"
+    if 'ai_insights' not in st.session_state:
+        st.session_state.ai_insights = ""
+    if 'slow_mode' not in st.session_state:
+        st.session_state.slow_mode = False
 
 # Function to record details when an activity is completed
 def complete_activity(activity_name, duration, success=True):
@@ -67,22 +76,58 @@ def change_activity(reason="timeout"): # Default reason is automatic timeout
 
     # Assuming success is True by default when changing activity (can be refined)
     complete_activity(st.session_state.current_activity, duration, success=True)
-    new_activity = activity_switcher.get_next_activity(
+    
+    # Try to get AI recommendation first
+    ai_recommendation = ai_integration.get_activity_recommendation(
         current_activity=st.session_state.current_activity,
-        reason=reason, 
-        frustration_level=st.session_state.frustration_moments 
+        reason=reason,
+        frustration_level=st.session_state.frustration_moments
     )
+    
+    # Use AI recommendation if available, otherwise use activity switcher
+    if ai_recommendation:
+        new_activity = ai_recommendation
+        print(f"Using AI recommendation: {new_activity}")
+    else:
+        new_activity = activity_switcher.get_next_activity(
+            current_activity=st.session_state.current_activity,
+            reason=reason, 
+            frustration_level=st.session_state.frustration_moments 
+        )
 
     st.session_state.current_activity = new_activity
     st.session_state.activity_start_time = current_time
     voice_agent.speak(f"Let's change the game! Now we play {new_activity.replace('_', ' ')}!") 
+    
+    # Generate a new AI insight when changing activities
+    st.session_state.ai_insights = ai_integration.generate_insight(
+        user_name=st.session_state.user_name,
+        current_activity=new_activity
+    )
 
     st.rerun()
 
 # Function to handle the "I'm bored" button click or voice command
 def handle_boredom():
     st.session_state.frustration_moments += 1
-    data_logger.log_frustration_moment()
+    
+    # Log the frustration moment with current activity
+    data_logger.log_frustration_moment(activity=st.session_state.current_activity)
+    
+    # Get personalized response from AI if available
+    if 'ai_integration' in st.session_state:
+        # Generate a response based on current emotion and activity
+        response = ai_integration.process_input(
+            "I'm bored", 
+            current_activity=st.session_state.current_activity,
+            user_name=st.session_state.user_name
+        )
+        
+        # Use the AI-generated response if available
+        if response and 'response' in response:
+            voice_agent.speak(response['response'])
+    
+    # Change to a new activity
     change_activity(reason="boredom")
 
 # Function to listen for voice commands using the voice agent
@@ -90,10 +135,43 @@ def listen_for_commands():
     command = voice_agent.listen()
     if command:
         command_lower = command.lower()
-        if "i'm bored" in command_lower or "bored" in command_lower:
-            handle_boredom()
-        elif "change game" in command_lower or "change activity" in command_lower:
-            change_activity(reason="voice_command")
+        
+        # Process command with AI integration if available
+        if 'ai_integration' in st.session_state:
+            # Get AI-enhanced understanding of the command
+            result = ai_integration.process_input(
+                command,
+                current_activity=st.session_state.current_activity,
+                user_name=st.session_state.user_name
+            )
+            
+            # Check for intents based on AI processing
+            intent = result.get('intent', 'unknown')
+            confidence = result.get('confidence', 0.0)
+            
+            if intent == 'bored' and confidence > 0.3:
+                handle_boredom()
+            elif intent == 'change_activity' and confidence > 0.3:
+                change_activity(reason="voice_command")
+            elif intent in ['confused', 'help'] and confidence > 0.3:
+                # Provide help based on current activity
+                voice_agent.speak(f"Let me explain how to play {st.session_state.current_activity.replace('_', ' ')}. Take your time and have fun!")
+            
+            # Update emotion if detected
+            if 'emotion' in result and result['emotion'] != 'neutral':
+                st.session_state.emotion = result['emotion']
+            
+            # If AI provided a response, speak it
+            if 'response' in result and result['response']:
+                voice_agent.speak(result['response'])
+        
+        # Fallback to basic command detection
+        else:
+            if "i'm bored" in command_lower or "bored" in command_lower:
+                handle_boredom()
+            elif "change game" in command_lower or "change activity" in command_lower:
+                change_activity(reason="voice_command")
+        
         return command
     return None
 
@@ -101,6 +179,65 @@ def listen_for_commands():
 def main():
     load_css()
     initialize_session_state()
+    
+    # Initialize AI components
+    global voice_agent, activity_switcher, data_logger, nlp_processor, recommendation_engine, emotion_detector, ai_integration
+    
+    # Create data logger first as it's needed by other components
+    if 'data_logger' not in st.session_state:
+        st.session_state.data_logger = DataLogger()
+        data_logger = st.session_state.data_logger
+    else:
+        data_logger = st.session_state.data_logger
+    
+    # Create NLP processor
+    if 'nlp_processor' not in st.session_state:
+        st.session_state.nlp_processor = NLPProcessor()
+        nlp_processor = st.session_state.nlp_processor
+    else:
+        nlp_processor = st.session_state.nlp_processor
+    
+    # Create recommendation engine
+    if 'recommendation_engine' not in st.session_state:
+        st.session_state.recommendation_engine = RecommendationEngine(data_logger)
+        recommendation_engine = st.session_state.recommendation_engine
+    else:
+        recommendation_engine = st.session_state.recommendation_engine
+    
+    # Create emotion detector
+    if 'emotion_detector' not in st.session_state:
+        st.session_state.emotion_detector = EmotionDetector()
+        emotion_detector = st.session_state.emotion_detector
+    else:
+        emotion_detector = st.session_state.emotion_detector
+        
+    # Create AI integration to coordinate all AI components
+    if 'ai_integration' not in st.session_state:
+        from src.ai_models.ai_integration import AIIntegration
+        st.session_state.ai_integration = AIIntegration(
+            nlp_processor=nlp_processor,
+            emotion_detector=emotion_detector,
+            recommendation_engine=recommendation_engine,
+            data_logger=data_logger
+        )
+        ai_integration = st.session_state.ai_integration
+    else:
+        ai_integration = st.session_state.ai_integration
+    
+    # Create activity switcher with data logger and recommendation engine
+    if 'activity_switcher' not in st.session_state:
+        st.session_state.activity_switcher = ActivitySwitcher(data_logger)
+        activity_switcher = st.session_state.activity_switcher
+    else:
+        activity_switcher = st.session_state.activity_switcher
+    
+    # Create voice agent
+    if 'voice_agent' not in st.session_state:
+        st.session_state.voice_agent = VoiceAgent()
+        voice_agent = st.session_state.voice_agent
+    else:
+        voice_agent = st.session_state.voice_agent
+    
     col1, col2 = st.columns([1, 3]) 
 
     # Left Column -Avatar
@@ -123,6 +260,25 @@ def main():
         max_duration = APP_CONFIG.get("max_activity_duration", 300) # Default 300s (5 min)
         progress = min(activity_duration / max_duration, 1.0)
         st.progress(progress)
+        
+        # Display AI insights if available
+        if st.session_state.ai_insights:
+            st.info(st.session_state.ai_insights)
+        
+        # Update emotion detection periodically
+        if time.time() % 10 < 0.1:  # Check roughly every 10 seconds
+            emotion, confidence = emotion_detector.get_current_emotion()
+            if confidence > 0.4:  # Only update if confidence is reasonable
+                st.session_state.emotion = emotion
+                # Update avatar state based on emotion
+                if emotion == "happy":
+                    st.session_state.avatar_state = "happy"
+                elif emotion in ["sad", "angry"]:
+                    st.session_state.avatar_state = "sad"
+                elif emotion == "surprised":
+                    st.session_state.avatar_state = "surprised"
+                elif emotion == "confused":
+                    st.session_state.avatar_state = "thinking"
 
         # Here I add the "I'm bored" button
         if st.button("😕 I'm bored!", key="boredom_button", use_container_width=True):
@@ -197,7 +353,22 @@ def show_memory_game():
 
     # Initialize game state within session_state if it doesn't exist for this round
     if 'memory_sequence' not in st.session_state:
-        st.session_state.memory_sequence = random.sample(memory_items, 3)
+        # Use AI to adapt difficulty if available
+        if 'ai_integration' in st.session_state:
+            # Get success rate from previous memory games
+            success_history = [item for item in st.session_state.completed_activities 
+                              if item['activity'] == 'memory_game']
+            success_rate = sum(1 for item in success_history if item['success']) / max(1, len(success_history))
+            
+            # Get adaptive difficulty parameters
+            difficulty = ai_integration.adapt_difficulty('memory_game', success_rate)
+            items_count = difficulty.get('items_count', 3)  # Default to 3 if not specified
+            
+            st.session_state.memory_sequence = random.sample(memory_items, items_count)
+        else:
+            # Default behavior without AI
+            st.session_state.memory_sequence = random.sample(memory_items, 3)
+            
         st.session_state.memory_display_phase = True
         st.session_state.memory_start_time = time.time()
         st.session_state.user_memory_selection = []
@@ -254,16 +425,48 @@ def show_quiz_game():
 
     # Define a list of simple quiz questions suitable for children
     quiz_questions = [
-        {"question": "Which animal says 'meow'?", "options": ["Dog", "Cat", "Cow", "Sheep"], "answer": "Cat"},
-        {"question": "How many fingers do you have on one hand?", "options": ["3", "5", "8", "10"], "answer": "5"},
-        {"question": "What color is the sky on a clear day?", "options": ["Green", "Red", "Blue", "Yellow"], "answer": "Blue"},
-        {"question": "Which fruit is typically yellow and curved?", "options": ["Apple", "Banana", "Strawberry", "Grape"], "answer": "Banana"}
+        # Level 1 (Easy)
+        {"question": "Which animal says 'meow'?", "options": ["Dog", "Cat", "Cow", "Sheep"], "answer": "Cat", "level": 1},
+        {"question": "How many fingers do you have on one hand?", "options": ["3", "5", "8", "10"], "answer": "5", "level": 1},
+        {"question": "What color is the sky on a clear day?", "options": ["Green", "Red", "Blue", "Yellow"], "answer": "Blue", "level": 1},
+        {"question": "Which fruit is typically yellow and curved?", "options": ["Apple", "Banana", "Strawberry", "Grape"], "answer": "Banana", "level": 1},
+        
+        # Level 2 (Medium)
+        {"question": "Which season comes after summer?", "options": ["Winter", "Spring", "Fall", "None of these"], "answer": "Fall", "level": 2},
+        {"question": "How many sides does a triangle have?", "options": ["2", "3", "4", "5"], "answer": "3", "level": 2},
+        {"question": "Which planet do we live on?", "options": ["Mars", "Earth", "Jupiter", "Moon"], "answer": "Earth", "level": 2},
+        {"question": "What do plants need to grow?", "options": ["Candy", "Water", "Toys", "Books"], "answer": "Water", "level": 2},
+        
+        # Level 3 (Hard)
+        {"question": "Which of these animals is a mammal?", "options": ["Fish", "Snake", "Dolphin", "Lizard"], "answer": "Dolphin", "level": 3},
+        {"question": "What is the largest ocean on Earth?", "options": ["Atlantic", "Indian", "Arctic", "Pacific"], "answer": "Pacific", "level": 3},
+        {"question": "How many continents are there in the world?", "options": ["5", "6", "7", "8"], "answer": "7", "level": 3},
+        {"question": "Which of these is NOT a state of matter?", "options": ["Solid", "Liquid", "Gas", "Rock"], "answer": "Rock", "level": 3}
     ]
 
     # Initialize the state for the current question if it doesn't exist
     if 'current_quiz_question' not in st.session_state or st.session_state.current_quiz_question is None:
-        # Randomly choose a question from the list
-        st.session_state.current_quiz_question = random.choice(quiz_questions)
+        # Use AI to adapt difficulty if available
+        if 'ai_integration' in st.session_state:
+            # Get success rate from previous quiz games
+            success_history = [item for item in st.session_state.completed_activities 
+                              if item['activity'] == 'quiz_game']
+            success_rate = sum(1 for item in success_history if item['success']) / max(1, len(success_history))
+            
+            # Get adaptive difficulty parameters
+            difficulty = ai_integration.adapt_difficulty('quiz_game', success_rate)
+            question_level = difficulty.get('question_level', 1)  # Default to level 1 if not specified
+            
+            # Filter questions by level
+            level_questions = [q for q in quiz_questions if q.get('level', 1) <= question_level]
+            if level_questions:
+                st.session_state.current_quiz_question = random.choice(level_questions)
+            else:
+                st.session_state.current_quiz_question = random.choice(quiz_questions)
+        else:
+            # Default behavior without AI
+            st.session_state.current_quiz_question = random.choice(quiz_questions)
+            
         # Speak the question using the voice agent
         voice_agent.speak(st.session_state.current_quiz_question["question"])
 
@@ -374,7 +577,25 @@ def show_mindfulness_activity():
 
     # Initialize the state for the current mindfulness exercise if it doesn't exist
     if 'mindfulness_exercise' not in st.session_state or st.session_state.mindfulness_exercise is None:
-        st.session_state.mindfulness_exercise = random.choice(exercises)
+        # Select a random exercise
+        exercise = random.choice(exercises)
+        
+        # Use AI to adapt duration if available
+        if 'ai_integration' in st.session_state:
+            # Get success rate from previous mindfulness activities
+            success_history = [item for item in st.session_state.completed_activities 
+                              if item['activity'] == 'mindfulness_break']
+            success_rate = sum(1 for item in success_history if item['success']) / max(1, len(success_history))
+            
+            # Get adaptive difficulty parameters
+            difficulty = ai_integration.adapt_difficulty('mindfulness_break', success_rate)
+            duration = difficulty.get('duration', exercise['duration'])  # Use AI duration or default
+            
+            # Create a copy of the exercise with the adapted duration
+            exercise = exercise.copy()
+            exercise['duration'] = duration
+        
+        st.session_state.mindfulness_exercise = exercise
         st.session_state.mindfulness_start_time = time.time()
         voice_agent.speak(f"Let's try {st.session_state.mindfulness_exercise['title']}. {st.session_state.mindfulness_exercise['instruction']}")
 

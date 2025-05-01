@@ -1,13 +1,16 @@
 import random
 import time
+import pandas as pd
 from src.utils.config import APP_CONFIG
+from src.ai_models.recommendation_engine import RecommendationEngine
 
 class ActivitySwitcher:
     """
     Manages activity switching based on user preferences,
     attention span and frustration level.
+    Uses AI recommendation engine to personalize activity selection.
     """
-    def __init__(self):
+    def __init__(self, data_logger=None):
         # I define the list of available activities
         self.activities = [
             "memory",
@@ -26,6 +29,11 @@ class ActivitySwitcher:
         
         # I initialize user preferences (will be populated with usage)
         self.user_preferences = {}
+        
+        # Initialize AI recommendation engine
+        self.data_logger = data_logger
+        self.recommendation_engine = RecommendationEngine(data_logger)
+        self.use_ai_recommendations = APP_CONFIG.get("use_ai_recommendations", True)
     
     def get_next_activity(self, current_activity=None, reason="timeout", frustration_level=0):
         """
@@ -34,6 +42,7 @@ class ActivitySwitcher:
         - Reason for change (timeout, boredom, voice command)
         - User's frustration level
         - User's historical preferences
+        - AI-driven recommendations based on engagement patterns
         
         Args:
             current_activity (str): Currently running activity
@@ -43,6 +52,41 @@ class ActivitySwitcher:
         Returns:
             str: Name of the next activity to execute
         """
+        # Try to get AI recommendation if enabled
+        if self.use_ai_recommendations and self.recommendation_engine:
+            # Update recommendation engine with latest data if data logger is available
+            if self.data_logger:
+                # Load data from data logger's CSV files
+                try:
+                    activity_data = pd.read_csv(self.data_logger.activity_log) if hasattr(self.data_logger, 'activity_log') else None
+                    attention_data = pd.read_csv(self.data_logger.attention_log) if hasattr(self.data_logger, 'attention_log') else None
+                    frustration_data = pd.read_csv(self.data_logger.frustration_log) if hasattr(self.data_logger, 'frustration_log') else None
+                    
+                    # Update recommendation engine with latest data
+                    self.recommendation_engine.update_profile(
+                        activity_data=activity_data,
+                        attention_data=attention_data,
+                        frustration_data=frustration_data
+                    )
+                except Exception as e:
+                    print(f"Error updating recommendation engine: {e}")
+            
+            # Get AI recommendation
+            ai_recommendation = self.recommendation_engine.get_recommended_activity(
+                current_activity=current_activity,
+                reason=reason,
+                frustration_level=frustration_level
+            )
+            
+            # Use AI recommendation if available
+            if ai_recommendation:
+                print(f"AI recommended activity: {ai_recommendation}")
+                self.activity_history.append(ai_recommendation)
+                if len(self.activity_history) > self.max_history_size * 2:
+                    self.activity_history = self.activity_history[-self.max_history_size:]
+                return ai_recommendation
+        
+        # Fall back to rule-based selection if AI recommendation is not available
         # I filter out the current activity
         available_activities = [a for a in self.activities if a != current_activity]
         
